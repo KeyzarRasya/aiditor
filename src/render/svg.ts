@@ -8,10 +8,12 @@ import type {
   GroupNode,
   ImageNode,
   LineNode,
+  PathNode,
   RectNode,
   Style,
   TextNode,
 } from "../core/node.js";
+import { UNRESOLVED_COMPONENT } from "../core/node.js";
 import { round } from "../core/units.js";
 import type { Theme } from "../theme/theme.js";
 
@@ -179,7 +181,21 @@ function renderImage(node: ImageNode, box: Box): string {
   );
 }
 
+function renderPath(node: PathNode, box: Box, context: RenderContext, theme: Theme): string {
+  const scaleX = box.width / node.viewBox;
+  const scaleY = box.height / node.viewBox;
+  const transform = `translate(${n(box.x)} ${n(box.y)}) scale(${n(scaleX)} ${n(scaleY)})`;
+  return (
+    `<path d="${escapeAttribute(node.d)}" transform="${transform}" ` +
+    `${shapeAttributes(node.style, context, theme)}/>`
+  );
+}
+
 function renderNode(node: DesignNode, context: RenderContext, theme: Theme): string {
+  if (node.kind === "component") {
+    throw new Error(UNRESOLVED_COMPONENT);
+  }
+
   const box = node.box;
   if (!box) return "";
 
@@ -192,6 +208,8 @@ function renderNode(node: DesignNode, context: RenderContext, theme: Theme): str
       return renderCircle(node, box, context, theme);
     case "line":
       return renderLine(node, box, context, theme);
+    case "path":
+      return renderPath(node, box, context, theme);
     case "text":
       return renderText(node, box, theme);
     case "image":
@@ -199,7 +217,21 @@ function renderNode(node: DesignNode, context: RenderContext, theme: Theme): str
   }
 }
 
+/** Fail loudly if a semantic component was never resolved (i.e. `layout()` has not run). */
+function assertNoComponents(node: DesignNode): void {
+  if (node.kind === "component") {
+    throw new Error(UNRESOLVED_COMPONENT);
+  }
+  if (node.kind === "group") {
+    for (const child of node.children) {
+      assertNoComponents(child);
+    }
+  }
+}
+
 export function renderToSvg(post: Post): string {
+  assertNoComponents(post.root);
+
   const context: RenderContext = { defs: [], filterIndex: 0 };
   const content = renderNode(post.root, context, post.theme);
   const defs = context.defs.length > 0 ? `<defs>${context.defs.join("")}</defs>` : "";

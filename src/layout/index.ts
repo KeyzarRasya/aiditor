@@ -1,8 +1,10 @@
 import type { Post } from "../core/canvas.js";
 import type { Box, DesignNode, GroupNode, TextNode } from "../core/node.js";
+import { UNRESOLVED_COMPONENT } from "../core/node.js";
 import { resolveSpacing } from "../core/units.js";
 import { layoutText } from "../text/measure.js";
 import type { LayoutContext, Placement, Resolved, Size2 } from "./context.js";
+import { normalizeComponents } from "./components.js";
 import { resolveFlex } from "./flex.js";
 import { resolveGrid } from "./grid.js";
 import { resolveHeightTarget, resolveLength, resolveWidthTarget } from "./length.js";
@@ -55,8 +57,18 @@ export function layout(post: Post): Post {
       }
       case "text":
         return { size: resolveText(node, available) };
+      case "path": {
+        if (typeof node.layout.width !== "number" || typeof node.layout.height !== "number") {
+          throw new Error(
+            `path("${node.d}") requires numeric "width" and "height" props because it has no intrinsic size.`,
+          );
+        }
+        return { size: { width: node.layout.width, height: node.layout.height } };
+      }
       case "group":
         return resolveGroup(node, available);
+      case "component":
+        throw new Error(UNRESOLVED_COMPONENT);
     }
   }
 
@@ -156,6 +168,9 @@ export function layout(post: Post): Post {
       });
     }
   }
+
+  // Resolve deferred semantic components to concrete nodes before measuring anything.
+  normalizeComponents(post.root, post.theme);
 
   resolve(post.root, { width: post.width, height: post.height });
   place(post.root, { x: 0, y: 0, width: post.width, height: post.height });

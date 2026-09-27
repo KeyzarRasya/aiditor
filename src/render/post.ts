@@ -1,5 +1,6 @@
 import type { Post } from "../core/canvas.js";
 import { getFontRegistry } from "../fonts/registry.js";
+import { layout } from "../layout/index.js";
 import { renderToPng } from "./png.js";
 import { renderToSvg } from "./svg.js";
 
@@ -12,6 +13,8 @@ export interface RenderPostOptions {
 }
 
 export function renderPost(post: Post, options: RenderPostOptions = {}): string | Buffer {
+  layout(post);
+
   const svg = renderToSvg(post);
   const format = options.format ?? "png";
   if (format === "svg") return svg;

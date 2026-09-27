@@ -15,17 +15,18 @@ For the product vision and requirements see [`PRD.md`](./PRD.md). For agent-faci
 4. [The rendering pipeline](#4-the-rendering-pipeline)
 5. [Core data model](#5-core-data-model)
 6. [Sizing and layout rules](#6-sizing-and-layout-rules)
-7. [Theme system](#7-theme-system)
-8. [Fonts and text measurement](#8-fonts-and-text-measurement)
-9. [Renderers: SVG and PNG](#9-renderers-svg-and-png)
-10. [CLI and configuration](#10-cli-and-configuration)
-11. [Public API reference](#11-public-api-reference)
-12. [Writing a post](#12-writing-a-post)
-13. [Extending the engine](#13-extending-the-engine)
-14. [Testing](#14-testing)
-15. [Known limitations and gotchas](#15-known-limitations-and-gotchas)
-16. [Troubleshooting](#16-troubleshooting)
-17. [Where the code goes next](#17-where-the-code-goes-next)
+7. [Component system](#7-component-system)
+8. [Theme system](#8-theme-system)
+9. [Fonts and text measurement](#9-fonts-and-text-measurement)
+10. [Renderers: SVG and PNG](#10-renderers-svg-and-png)
+11. [CLI and configuration](#11-cli-and-configuration)
+12. [Public API reference](#12-public-api-reference)
+13. [Writing a post](#13-writing-a-post)
+14. [Extending the engine](#14-extending-the-engine)
+15. [Testing](#15-testing)
+16. [Known limitations and gotchas](#16-known-limitations-and-gotchas)
+17. [Troubleshooting](#17-troubleshooting)
+18. [Where the code goes next](#18-where-the-code-goes-next)
 
 ---
 
@@ -82,10 +83,12 @@ aiditor/
 │   ├── layout/
 │   │   ├── index.ts       # resolve + place pass, produces absolute boxes
 │   │   ├── context.ts     # Size2 / Resolved / Placement / LayoutContext types
+│   │   ├── components.ts  # resolves deferred component nodes against the theme
 │   │   ├── length.ts      # px / percent / fill / hug resolution
 │   │   ├── flex.ts        # flex resolver: gap, align, justify, grow
 │   │   ├── grid.ts        # grid resolver: equal columns, row-major auto-flow
 │   │   └── align.ts       # center / alignLeft / alignRight / alignTop / alignBottom
+│   ├── components/        # semantic components (headline, card, comparison, flow, …)
 │   ├── render/
 │   │   ├── svg.ts         # DesignNode tree -> SVG string
 │   │   ├── png.ts         # SVG string -> PNG buffer (resvg)
@@ -139,9 +142,10 @@ PNG buffer
 
 The two phases are strictly separated:
 
-- **Layout** runs a bottom-up **resolve** pass (intrinsic sizes, text wrapping, child placements)
-  and then a top-down **place** pass (absolute positions). Resolve writes `node.box` and, for text,
-  `node.metrics`. Each node is resolved exactly once, so its measured size always matches its box.
+- **Layout** first resolves deferred components against the theme, then runs a bottom-up **resolve**
+  pass (intrinsic sizes, text wrapping, child placements) and a top-down **place** pass (absolute
+  positions). Resolve writes `node.box` and, for text, `node.metrics`. Each node is resolved exactly
+  once, so its measured size always matches its box.
 - **Rendering** only *reads* boxes and metrics. It never measures anything.
 
 That separation is why `renderToSvg` is a pure, dependency-light function and why the layout engine
@@ -160,7 +164,9 @@ Everything is a `DesignNode` — a discriminated union on `kind` (`src/core/node
 | `line` | `x1,y1,x2,y2` | coordinates relative to the node's box |
 | `text` | `text`, `metrics?` | `metrics` filled in by layout |
 | `image` | `src` | requires numeric `width`/`height` |
+| `path` | `d`, `viewBox` | SVG path, scaled into the box; requires numeric `width`/`height` |
 | `group` | `children[]` | the only container |
+| `component` | `factory` | deferred semantic component; resolved by `layout()` |
 
 Every node carries:
 
@@ -254,7 +260,81 @@ a grown or percentage-sized column wraps to that definite width.
 
 ---
 
-## 7. Theme system
+## 7. Component system
+
+Semantic components (`headline`, `card`, `comparison`, `flow`, …) are pure, prop-based functions in
+`src/components/`. Each returns a `ComponentNode` — a **deferred** node carrying a
+`(theme) => DesignNode` factory.
+
+### Why components are deferred
+
+A post's children are evaluated *before* `createPost` resolves the theme:
+
+```ts
+createPost({ size, theme: brand, children: [headline({ text })] });
+//                                        ^ headline() runs before createPost sees `brand`
+```
+
+So a component cannot read theme tokens at construction time. It defers instead: the factory is only
+called once the theme is known.
+
+### Resolution
+
+`layout()` normalizes the tree first (`src/layout/components.ts`), replacing every `component` node
+with `factory(theme)` depth-first and mutating the parent's `children` in place. After that pass the
+tree holds only real nodes, so the flex/grid resolvers and the renderer never see a component.
+
+- **Components resolve during `layout()`.** Before that, `post.root.children` holds `component` nodes.
+- **`renderToSvg()` needs a laid-out post** and otherwise throws
+  `Component was not resolved. Call layout(post) before rendering this tree.` `renderPost()` calls
+  `layout()` for you.
+- **Factories must be pure** — read `theme`, build nodes, nothing else. Determinism depends on it.
+
+### Writing one
+
+```ts
+export function headline(props: HeadlineProps): ComponentNode {
+  return component((theme) => {
+    const heading = theme.typography.heading;
+    const { text: content, ...overrides } = props;
+    return text(content, {
+      fontFamily: heading.family,
+      fontWeight: heading.weight,
+      fontSize: heading.size,
+      lineHeight: heading.lineHeight,
+      color: theme.colors.text,
+      ...overrides,          // explicit props beat tokens
+    });
+  });
+}
+```
+
+### Catalog
+
+| Component | Props |
+|---|---|
+| `headline` | `{ text }` |
+| `subheadline` | `{ text }` |
+| `paragraph` | `{ text }` |
+| `cta` | `{ text }` |
+| `badge` | `{ text, tone?: "accent" \| "muted" }` |
+| `divider` | `{}` |
+| `card` | `{ title?, items?: string[], children? }` |
+| `quote` | `{ text, author? }` |
+| `number` | `{ value, label? }` |
+| `comparison` | `{ left: Column, right: Column }` |
+| `flow` | `{ steps: string[], direction?: "column" \| "row" }` |
+| `icon` | `{ d, size, viewBox? }` |
+
+Every component also accepts the full `NodeOptions` set (`fontSize`, `width`, `grow`, `padding`, …)
+merged last, so any token default can be overridden per use. `Column = { title, items? }`.
+
+`image()` — the primitive — doubles as the image component; it already takes `src` plus explicit
+`width`/`height`.
+
+---
+
+## 8. Theme system
 
 `src/theme/theme.ts` defines the token model and `defaultTheme`:
 
@@ -270,12 +350,13 @@ at the repo root uses. `createPost({ theme })` accepts the same partial, so a si
 override tokens locally.
 
 Today, primitives consume the theme **implicitly**: text falls back to `typography.body` for family,
-weight, size, and line height, and to `colors.text` for its fill. `typography.heading` is defined but
-not yet consumed — the Phase 3 semantic components (`headline()`, `card()`, …) will use it.
+weight, size, and line height, and to `colors.text` for its fill. `typography.heading` is consumed by
+the semantic components (`headline()`, `subheadline()`, `number()`, `flow()`), which resolve against
+the post's merged theme during `layout()` (§7).
 
 ---
 
-## 8. Fonts and text measurement
+## 9. Fonts and text measurement
 
 `FontRegistry` (`src/fonts/registry.ts`) scans a directory for `.ttf`/`.otf` files and reads each
 font's real metadata — `familyName`, `OS/2.usWeightClass`, and italic detection from the subfamily
@@ -307,7 +388,7 @@ the measurer and the rasterizer.
 
 ---
 
-## 9. Renderers: SVG and PNG
+## 10. Renderers: SVG and PNG
 
 `src/render/svg.ts` walks the tree and emits a `<svg>` with a background `<rect>` and one element per
 node:
@@ -341,7 +422,7 @@ is what makes output identical across machines.
 
 ---
 
-## 10. CLI and configuration
+## 11. CLI and configuration
 
 `src/cli/index.ts` implements two commands:
 
@@ -372,7 +453,7 @@ before rendering, so `fontsDir` is authoritative for the whole run.
 
 ---
 
-## 11. Public API reference
+## 12. Public API reference
 
 Everything below is exported from `src/index.ts` (import as `aiditor`).
 
@@ -392,14 +473,21 @@ Everything below is exported from `src/index.ts` (import as `aiditor`).
 | `rect` | `(options?) => RectNode` |
 | `circle` | `(options & { radius }) => CircleNode` |
 | `line` | `(options & { x1,y1,x2,y2 }) => LineNode` |
+| `path` | `(d: string, options & { viewBox? }) => PathNode` |
 | `text` | `(content: string, options?) => TextNode` |
 | `image` | `(src: string, options & { width, height }) => ImageNode` |
 | `group` | `(children, options?) => GroupNode` |
 | `stack` / `row` | `(children, options?) => GroupNode` (column / row sugar) |
 | `grid` | `(children, { columns, ...options }) => GroupNode` |
+| `component` | `(factory: (theme) => DesignNode) => ComponentNode` |
 
 **Alignment helpers:** `center`, `alignLeft`, `alignRight`, `alignTop`, `alignBottom` —
 `(children, options?) => GroupNode`, sugar over `align` / `justify` / `fill`.
+
+**Components** (all return `ComponentNode`; props listed in §7):
+
+`headline`, `subheadline`, `paragraph`, `cta`, `badge`, `divider`, `card`, `quote`, `number`,
+`comparison`, `flow`, `icon`.
 
 **Pipeline**
 
@@ -426,7 +514,7 @@ Everything below is exported from `src/index.ts` (import as `aiditor`).
 
 ---
 
-## 12. Writing a post
+## 13. Writing a post
 
 A post is one file with a default export:
 
@@ -459,46 +547,69 @@ export default createPost({
 Then `npm run render -- posts/hello.ts`. Because sizing is semantic, the card grows to fit its text
 and the container wraps the headline automatically — no coordinates anywhere.
 
+Most posts should use the semantic components instead of raw primitives — `posts/milestone.ts` is the
+same idea written entirely with them:
+
+```ts
+import { card, createPost, cta, headline, paragraph } from "aiditor";
+
+export default createPost({
+  size: "instagram-square",
+  children: [
+    headline({ text: "ERP yang mahal belum tentu ERP yang paling cocok." }),
+    paragraph({ text: "Yang lebih penting adalah apakah ERP tersebut sesuai proses bisnis." }),
+    card({ title: "Sebelum memilih ERP", items: ["Pahami proses bisnis", "Tentukan kebutuhan"] }),
+    cta({ text: "Pahami proses bisnis sebelum memilih software." }),
+  ],
+});
+```
+
 ---
 
-## 13. Extending the engine
+## 14. Extending the engine
 
 ### Adding a semantic component (the normal case)
 
-Most new capabilities should **not** add a node kind. Write a function that returns a `DesignNode`
-subtree built from existing primitives, pulling defaults from the theme. Example shape:
+Most new capabilities should **not** add a node kind. Write a component in `src/components/` that
+returns a `ComponentNode` via `component(factory)`; `layout()` resolves it against the theme.
 
 ```ts
-// src/components/badge.ts (Phase 3)
-export function badge(content: string, options: BadgeOptions = {}): GroupNode {
-  return group([text(content, { fontSize: 24, color: theme.colors.accent })], {
-    fill: theme.colors.surface,
-    radius: theme.borderRadius.sm,
-    padding: [8, 16],
-    width: "hug",
-    ...options,
+export function badge(props: BadgeProps): ComponentNode {
+  return component((theme) => {
+    const body = theme.typography.body;
+    const { text: content, tone = "accent", ...overrides } = props;
+    return group(
+      [text(content, { fontSize: Math.round(body.size * 0.6), color: theme.colors.accent })],
+      {
+        fill: theme.colors.surface,
+        radius: theme.borderRadius.sm,
+        padding: [10, 18],
+        width: "hug",
+        ...overrides,   // explicit props beat tokens
+      },
+    );
   });
 }
 ```
 
-Components are pure functions of their inputs and the theme — easy to test by asserting on geometry.
+Keep the factory **pure** (theme in, nodes out) and spread `overrides` last so callers can always
+override a token. Test by asserting on geometry after `layout()`.
 
 ### Adding a primitive (rare)
 
-Adding a new `kind` touches five places; keep them in sync:
+Adding a new `kind` touches four places; keep them in sync:
 
-1. `NodeKind` union and a `XxxNode` interface in `src/core/node.ts`.
-2. Add it to the `DesignNode` union.
-3. Add a builder function (and export it from `src/index.ts`).
-4. Handle the kind in `measureNode` in `src/layout/index.ts`.
-5. Handle the kind in `renderNode` in `src/render/svg.ts`.
+1. `NodeKind`, a `XxxNode` interface, and the `DesignNode` union in `src/core/node.ts`.
+2. A builder function (and export it from `src/index.ts`).
+3. Handle the kind in `resolveNode` in `src/layout/index.ts`.
+4. Handle the kind in `renderNode` in `src/render/svg.ts`.
 
-TypeScript's exhaustive `switch` will error at steps 4–5 until both are handled — use that as your
-checklist.
+`path` is a worked example of this checklist. TypeScript's exhaustive `switch` errors at steps 3–4
+until both are handled — use that as your checklist.
 
 ---
 
-## 14. Testing
+## 15. Testing
 
 Tests live in `test/` and run under Vitest:
 
@@ -523,7 +634,7 @@ determinism rather than pixel snapshots.
 
 ---
 
-## 15. Known limitations and gotchas
+## 16. Known limitations and gotchas
 
 - **`line` coordinates are box-relative**, not canvas-absolute. `line({ x1: 0, y1: 0, x2: 100, y2: 0 })`
   draws a 100px rule starting at the node's laid-out box origin. Its bounding box (`100 × 0` here)
@@ -532,18 +643,22 @@ determinism rather than pixel snapshots.
   their intrinsic width, so text placed directly in a row does not wrap. Give row children `grow` or
   an explicit/percentage `width` to make them share and wrap.
 - **`grid()` requires a positive integer `columns`** — enforced by both types and a runtime error.
+- **`icon` / `path` require an explicit size.** A path has no intrinsic dimensions; give it `width`
+  and `height` (the `icon` component sets both from `size`).
+- **A post must be laid out before rendering.** `renderToSvg()` throws if any `component` node is
+  unresolved; use `renderPost()` or call `layout()` first.
 - **`image` requires numeric `width` and `height`** — the engine does not read intrinsic image size
   yet. Enforced by both types and a runtime error.
 - **A `rect` with no `width`/`height` measures to `0`.** Give it numbers or `"fill"`.
 - **`circle` ignores `width`/`height`**; its size is always `2 × radius`.
-- **`typography.heading` is unused** until the Phase 3 components land; primitives default to
-  `typography.body`.
+- **Primitives default to `typography.body`.** `typography.heading` is consumed by the components
+  (`headline`, `subheadline`, `number`, `flow`), not by the raw `text()` primitive.
 - **`--no-verify`-style shortcuts don't exist here.** If an error appears, fix the cause; the error
   strings are part of the contract (`AGENTS.md`).
 
 ---
 
-## 16. Troubleshooting
+## 17. Troubleshooting
 
 | Message | Cause / fix |
 |---|---|
@@ -552,20 +667,23 @@ determinism rather than pixel snapshots.
 | `image("…") requires numeric "width" and "height" props …` | Add explicit dimensions to the image. |
 | `Canvas dimensions must be positive integers` | `size` had a non-positive or non-integer width/height. |
 | `Unknown format "…". Available formats: …` | `size` was a string that is not one of `FORMATS` keys. |
+| `path("…") requires numeric "width" and "height" props …` | Give the path/icon an explicit size. |
+| `Component was not resolved. Call layout(post) …` | Call `layout()` (or use `renderPost()`) before `renderToSvg()`. |
 | `grid() requires "columns" to be a positive integer.` | `columns` was missing, fractional, or < 1. |
 | `"file.ts" must default-export the result of createPost().` | The post file has no default export (or exports something else). |
 | `Post file "…" was not found.` | Path passed to `social render`/`dev` is wrong. |
 
 ---
 
-## 17. Where the code goes next
+## 18. Where the code goes next
 
 The roadmap lives in the plan and `PRD.md`. Current state and next steps:
 
-- **Done:** Phase 0 (tooling), Phase 1 (renderer core), and Phase 2 (layout system — `grow`, grid,
-  percentages, alignment helpers, box-relative `line`).
-- **Next — Phase 3 (components):** `Headline`, `Paragraph`, `Card`, `CTA`, `Comparison`, `Flow`, and
-  the rest — pure functions over primitives, consuming `typography.heading`.
-- **Phase 4 (theme):** complete the token surface and `social.config.ts` integration.
+- **Done:** Phase 0 (tooling), Phase 1 (renderer core), Phase 2 (layout system — `grow`, grid,
+  percentages, alignment helpers, box-relative `line`), and Phase 3 (component system — 12 semantic
+  components over the deferred `component` node, plus a `path` primitive).
+- **Next — Phase 4 (theme):** load `theme.ts` at render time and let posts pick up the project theme
+  without threading it manually — the other half of the deferred-factory decision.
 - **Phase 5 (CLI):** `social init`, `commander`-based parsing, `chokidar` watch.
-- **Phase 6 (agent optimization):** a complete `AGENTS.md` rulebook and per-component examples.
+- **Phase 6 (agent optimization):** layout presets, per-component examples, and a component
+  discovery command.

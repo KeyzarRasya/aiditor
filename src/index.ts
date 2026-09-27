@@ -6,12 +6,26 @@ export {
 } from "./core/canvas.js";
 export type { FormatName, Post, PostOptions, PostSize } from "./core/canvas.js";
 
-export { rect, circle, line, text, image, group, stack, row, grid } from "./core/node.js";
+export {
+  rect,
+  circle,
+  line,
+  path,
+  text,
+  image,
+  group,
+  stack,
+  row,
+  grid,
+  component,
+} from "./core/node.js";
 export type {
   Align,
   Box,
   CircleNode,
   CircleOptions,
+  ComponentFactory,
+  ComponentNode,
   DesignNode,
   Direction,
   FontStyle,
@@ -25,6 +39,8 @@ export type {
   LineOptions,
   NodeKind,
   NodeOptions,
+  PathNode,
+  PathOptions,
   RectNode,
   Size,
   Style,
@@ -44,6 +60,38 @@ export {
   alignTop,
   alignBottom,
 } from "./layout/align.js";
+
+export {
+  headline,
+  subheadline,
+  paragraph,
+  cta,
+  badge,
+  divider,
+  card,
+  quote,
+  number,
+  comparison,
+  flow,
+  icon,
+} from "./components/index.js";
+export type {
+  HeadlineProps,
+  SubheadlineProps,
+  ParagraphProps,
+  CtaProps,
+  BadgeProps,
+  BadgeTone,
+  DividerProps,
+  CardProps,
+  QuoteProps,
+  NumberProps,
+  ComparisonColumn,
+  ComparisonProps,
+  FlowDirection,
+  FlowProps,
+  IconProps,
+} from "./components/index.js";
 
 export { renderToSvg } from "./render/svg.js";
 export { renderToPng } from "./render/png.js";
