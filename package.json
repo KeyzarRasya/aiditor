@@ -27,11 +27,15 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
+    "docs": "tsx scripts/generate-component-docs.ts",
+    "social:components": "tsx src/cli/index.ts components",
     "format": "prettier --write .",
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "@resvg/resvg-js": "^2.6.2",
+    "chokidar": "^5.0.0",
+    "commander": "^15.0.0",
     "fontkit": "^2.0.4"
   },
   "devDependencies": {

@@ -23,5 +23,5 @@
       "aiditor/*": ["./src/*"]
     }
   },
-  "include": ["src", "posts", "theme.ts", "social.config.ts", "vitest.config.ts", "test"]
+  "include": ["src", "posts", "theme.ts", "social.config.ts", "vitest.config.ts", "test", "scripts"]
 }

@@ -57,7 +57,11 @@ npm run typecheck      # tsc --noEmit
 npm test               # vitest run
 npm run lint           # eslint .
 npm run build          # tsc -> build/
+npm run docs           # regenerate docs/COMPONENTS.md from the catalog
 ```
+
+`npm run docs` is enforced by a test: `docs/COMPONENTS.md` must byte-match the catalog, so it can never
+go stale silently.
 
 > **NODE_ENV gotcha.** If your shell exports `NODE_ENV=production`, `npm install` silently skips
 > devDependencies (no `vitest`, `tsc`, `tsx`, `eslint`). Install with
@@ -89,6 +93,8 @@ aiditor/
 │   │   ├── grid.ts        # grid resolver: equal columns, row-major auto-flow
 │   │   └── align.ts       # center / alignLeft / alignRight / alignTop / alignBottom
 │   ├── components/        # semantic components (headline, card, comparison, flow, …)
+│   │   └── catalog.ts     # the callable surface: summaries, params, examples
+│   ├── presets/           # page-level templates (educationalPost, comparisonPost, …)
 │   ├── render/
 │   │   ├── svg.ts         # DesignNode tree -> SVG string
 │   │   ├── png.ts         # SVG string -> PNG buffer (resvg)
@@ -98,7 +104,10 @@ aiditor/
 │   │   ├── load.ts        # load theme.ts / --theme <path> at runtime
 │   │   └── config.ts      # load social.config.ts
 │   ├── cli/
-│   │   └── index.ts       # `social render` / `social dev`
+│   │   ├── run.ts         # commander program + command handlers
+│   │   ├── init.ts        # `social init` scaffolding
+│   │   ├── templates.ts   # files written by `social init`
+│   │   └── index.ts       # shebang entry: run(process.argv.slice(2))
 │   └── index.ts           # public API barrel
 ├── posts/                 # your posts (NOT under src/)
 ├── fonts/                 # bundled Roboto Regular + Bold (.ttf)
@@ -107,8 +116,9 @@ aiditor/
 ├── build/                 # compiled engine (gitignored)
 ├── theme.ts               # project theme override
 ├── social.config.ts       # outDir / fontsDir / defaultFormat
+├── scripts/               # dev-only generators (`npm run docs`)
 ├── AGENTS.md
-└── docs/
+└── docs/                  # PRD, DEV-DOCS, generated COMPONENTS.md
 ```
 
 Two layout decisions differ from the PRD sketch:
@@ -333,6 +343,26 @@ merged last, so any token default can be overridden per use. `Column = { title, 
 `image()` — the primitive — doubles as the image component; it already takes `src` plus explicit
 `width`/`height`.
 
+This table is a hand-readable summary of `src/components/catalog.ts`, which is the machine-readable
+source of truth. Query it with `social components` or read the generated `docs/COMPONENTS.md` (§11).
+
+### Presets
+
+Five page-level templates (`src/presets/`) each return a single `ComponentNode` — a themed `stack` —
+so they drop straight into `createPost({ size, children: [preset({…})] })`:
+
+| Preset | Shape |
+|---|---|
+| `educationalPost` | badge?, headline, intro?, points card, takeaway? |
+| `comparisonPost` | headline, intro?, two-column comparison, takeaway? |
+| `listPost` | headline, intro?, numbered list card, takeaway? |
+| `processPost` | headline, intro?, numbered flow, takeaway? |
+| `quotePost` | headline?, pull quote, takeaway? |
+
+They also accept the full `NodeOptions` set (so `gap: 100` works), omit optional sections from the tree
+rather than rendering them empty, and are pure composition over the components above — no new engine
+concepts. They appear in the catalog under the `preset` category.
+
 ---
 
 ## 8. Theme system
@@ -456,19 +486,55 @@ is what makes output identical across machines.
 
 ## 11. CLI and configuration
 
-`src/cli/index.ts` implements two commands:
+`src/cli/run.ts` builds a `commander` program with the commands below; `src/cli/index.ts` is just the
+shebang plus `run(process.argv.slice(2))`. Splitting them keeps the handlers importable by tests.
 
 | Command | Behaviour |
 |---|---|
-| `social render <file> [--format svg\|png] [--out <dir>] [--theme <file>]` | loads the post, runs `layout`, renders, writes `dist/<name>.<ext>` |
-| `social dev <file> [--theme <file>]` | renders once, then watches the post **and** the theme file and re-renders (cache-busted) |
+| `social init [dir] [--force]` | scaffolds a runnable project (see below) |
+| `social components [name] [--json]` | lists the catalog; `--json` is machine-readable (see below) |
+| `social render <file> [--format svg\|png] [--out <dir>] [--theme <file>]` | loads the post, runs `layout`, renders, writes `<outDir>/<name>.<ext>` |
+| `social dev <file> [--format svg\|png] [--out <dir>] [--theme <file>]` | renders once, then watches the post **and** the theme file and re-renders (cache-busted) |
 
-Flags accept both `--format png` and `--format=png`. Errors are printed as `Error: <message>` and set
-a non-zero exit code.
+`-f` / `-o` / `-t` are short aliases for the three options. `social --version` prints the package
+version, and `social --help` (or running with no arguments) lists the commands. Both `--format png`
+and `--format=png` work.
 
-`dev` watches the **containing directory** of each file and filters by filename, rather than watching
-the file itself — atomic writes (editors, `writeFile`-and-rename) replace the inode and would
-otherwise silence a file-level watcher after the first change.
+Errors thrown by a command are printed as `Error: <message>` on stderr and set a non-zero exit code;
+commander handles usage errors itself.
+
+Watching uses `chokidar`, which survives the write-and-rename that editors perform — a plain
+`fs.watch` on the file path goes deaf after the first replacement. Each rebuild first reloads the
+theme, then re-imports the post with a cache-busting query.
+
+### `social init`
+
+Scaffolds a runnable project (`src/cli/init.ts` + `templates.ts`): `package.json`, `tsconfig.json`,
+`.gitignore`, `README.md`, `AGENTS.md`, `theme.ts`, `social.config.ts`, `posts/hello.ts`, `assets/`,
+and a copy of the engine's bundled fonts. It refuses a non-empty directory unless `--force`, and it
+never runs `npm install` for you — it prints the next steps instead.
+
+Two generated details make the scaffold work **before the engine is published**:
+
+- `package.json` depends on the engine as `"aiditor": "file:<engine>"`.
+- `tsconfig.json` maps `"aiditor"` → `./node_modules/aiditor/src/index.ts`.
+
+The mapping is needed because the engine's `exports` point at `build/`, which a fresh checkout has not
+built. The generated README and AGENTS.md state this plainly and note that the mapping can be dropped
+once `aiditor` ships to a registry.
+
+### `social components`
+
+```
+social components          # every entry: name, summary, required params
+social components card     # one entry, with params and a copy-paste example
+social components --json   # the whole catalog as a JSON array
+```
+
+It reads `src/components/catalog.ts` only — no config, font registry or theme is loaded — so it is
+instant and still works in a project whose `social.config.ts` is broken. The same catalog is rendered
+to `docs/COMPONENTS.md` by `npm run docs`, and `test/catalog.test.ts` fails if a component or layout
+helper is missing from it, or if the generated document drifts.
 
 `social.config.ts` (loaded by `src/theme/config.ts`) supplies:
 
@@ -707,6 +773,7 @@ determinism rather than pixel snapshots.
 | `Unknown format "…". Available formats: …` | `size` was a string that is not one of `FORMATS` keys. |
 | `path("…") requires numeric "width" and "height" props …` | Give the path/icon an explicit size. |
 | `Component was not resolved. Call layout(post) …` | Call `layout()` (or use `renderPost()`) before `renderToSvg()`. |
+| `card() requires at least one of "title", "items", or "children".` | An empty card. Give it content. This is the actionable form of the PRD's `card requires a "title"` example — we kept title optional (title **or** items **or** children) but reject a card with nothing in it. |
 | `Theme file "…" was not found.` | An explicit `--theme <path>` pointed at a missing file. |
 | `Theme file "…" must default-export defineTheme({...}).` | The theme module has no object default export. |
 | `grid() requires "columns" to be a positive integer.` | `columns` was missing, fractional, or < 1. |
@@ -719,10 +786,9 @@ determinism rather than pixel snapshots.
 
 The roadmap lives in the plan and `PRD.md`. Current state and next steps:
 
-- **Done:** Phase 0 (tooling), Phase 1 (renderer core), Phase 2 (layout system — `grow`, grid,
-  percentages, alignment helpers, box-relative `line`), Phase 3 (component system — 12 semantic
-  components over the deferred `component` node, plus a `path` primitive), and Phase 4 (theme system
-  — `theme.ts` applied to every post via the project-theme registry, plus `--theme`).
-- **Next — Phase 5 (CLI):** `social init` scaffolding, `commander`-based parsing, `chokidar` watch.
-- **Phase 6 (agent optimization):** layout presets, per-component examples, and a component
-  discovery command.
+- **Done:** Phases 0–6 — the MVP roadmap is complete. Phase 6 added the component catalog driving
+  `social components` and the generated `docs/COMPONENTS.md`, five page-level presets, and the
+  render-verification workflow.
+- **Post-MVP (PRD §18):** carousel generation, automatic layout, multi-theme switching, video/GIF,
+  and publishing the engine to a registry (which would let `social init` drop the `file:` + `paths`
+  arrangement).

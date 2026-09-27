@@ -10,17 +10,23 @@ import {
 export type CardProps = NodeOptions & {
   /** Optional heading inside the card. */
   title?: string;
-  /** Optional bulleted list. */
+  /** Optional list. */
   items?: string[];
+  /** Number the items (`1.`) instead of bulleting them. */
+  numbered?: boolean;
   /** Extra nodes appended after the title and items. */
   children?: DesignNode[];
 };
 
-/** Surface container with a title and/or bulleted items. */
+/** Surface container with a title and/or list. */
 export function card(props: CardProps): ComponentNode {
   return component((theme) => {
     const body = theme.typography.body;
-    const { title, items = [], children = [], ...overrides } = props;
+    const { title, items = [], numbered = false, children = [], ...overrides } = props;
+
+    if (!title && items.length === 0 && children.length === 0) {
+      throw new Error('card() requires at least one of "title", "items", or "children".');
+    }
 
     const content: DesignNode[] = [];
     if (title) {
@@ -34,9 +40,9 @@ export function card(props: CardProps): ComponentNode {
         }),
       );
     }
-    for (const item of items) {
+    items.forEach((item, index) => {
       content.push(
-        text(`•  ${item}`, {
+        text(`${numbered ? `${index + 1}.` : "•"}  ${item}`, {
           fontFamily: body.family,
           fontWeight: body.weight,
           fontSize: body.size,
@@ -44,7 +50,7 @@ export function card(props: CardProps): ComponentNode {
           color: theme.colors.textMuted,
         }),
       );
-    }
+    });
     content.push(...children);
 
     return group(content, {

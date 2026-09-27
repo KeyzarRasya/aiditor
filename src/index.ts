@@ -93,6 +93,21 @@ export type {
   IconProps,
 } from "./components/index.js";
 
+export {
+  educationalPost,
+  comparisonPost,
+  listPost,
+  processPost,
+  quotePost,
+} from "./presets/index.js";
+export type {
+  EducationalPostProps,
+  ComparisonPostProps,
+  ListPostProps,
+  ProcessPostProps,
+  QuotePostProps,
+} from "./presets/index.js";
+
 export { renderToSvg } from "./render/svg.js";
 export { renderToPng } from "./render/png.js";
 export type { PngRenderOptions } from "./render/png.js";
