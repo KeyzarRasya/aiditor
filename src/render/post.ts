@@ -1,0 +1,26 @@
+import type { Post } from "../core/canvas.js";
+import { getFontRegistry } from "../fonts/registry.js";
+import { renderToPng } from "./png.js";
+import { renderToSvg } from "./svg.js";
+
+export type RenderFormat = "svg" | "png";
+
+export interface RenderPostOptions {
+  format?: RenderFormat;
+  /** Override the font files handed to the rasterizer. Defaults to the registered fonts. */
+  fontFiles?: string[];
+}
+
+export function renderPost(post: Post, options: RenderPostOptions = {}): string | Buffer {
+  const svg = renderToSvg(post);
+  const format = options.format ?? "png";
+  if (format === "svg") return svg;
+
+  const registry = getFontRegistry();
+  return renderToPng(svg, {
+    width: post.width,
+    height: post.height,
+    fontFiles: options.fontFiles ?? registry.paths,
+    defaultFontFamily: post.theme.typography.body.family,
+  });
+}

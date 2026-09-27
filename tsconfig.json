@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "sourceMap": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "aiditor": ["./src/index.ts"],
+      "aiditor/*": ["./src/*"]
+    }
+  },
+  "include": ["src", "posts", "theme.ts", "social.config.ts", "vitest.config.ts", "test"]
+}
