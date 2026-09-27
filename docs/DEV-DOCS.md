@@ -94,7 +94,8 @@ aiditor/
 │   │   ├── png.ts         # SVG string -> PNG buffer (resvg)
 │   │   └── post.ts        # renderPost() facade
 │   ├── theme/
-│   │   ├── theme.ts       # token model, default theme, deep-merge createTheme
+│   │   ├── theme.ts       # token model, default theme, project-theme registry, createTheme
+│   │   ├── load.ts        # load theme.ts / --theme <path> at runtime
 │   │   └── config.ts      # load social.config.ts
 │   ├── cli/
 │   │   └── index.ts       # `social render` / `social dev`
@@ -344,15 +345,45 @@ merged last, so any token default can be overridden per use. `Column = { title, 
 - `borderRadius`: `sm`, `md`, `lg`
 - `shadows.card`: `{ color, blur, offsetX, offsetY }`
 
-`createTheme(overrides)` deep-merges a `DeepPartial<Theme>` over the defaults. `defineTheme()` is an
-identity helper that gives editors type checking for an override object — that is what `theme.ts`
-at the repo root uses. `createPost({ theme })` accepts the same partial, so a single post can
-override tokens locally.
+### Project theme: how it reaches a post
 
-Today, primitives consume the theme **implicitly**: text falls back to `typography.body` for family,
-weight, size, and line height, and to `colors.text` for its fill. `typography.heading` is consumed by
-the semantic components (`headline()`, `subheadline()`, `number()`, `flow()`), which resolve against
-the post's merged theme during `layout()` (§7).
+The engine must **not** import the project's `theme.ts` (that would couple `src/` to user content), so
+the project theme arrives at runtime through a registry:
+
+```
+theme.ts ──(CLI imports it)──▶ setProjectTheme() ──▶ createTheme() ──▶ post.theme
+```
+
+`createTheme(overrides)` is the single merge point, resolved as
+**`defaultTheme` ← project theme ← per-post overrides**:
+
+```ts
+createTheme(o) = deepMerge(deepMerge(defaultTheme, projectTheme), o)
+```
+
+Because `createPost` is the only caller, **every post picks up `theme.ts` with no post changes**, and
+an explicit `createPost({ theme })` still wins for one-off tweaks. `defineTheme()` remains the typed
+identity helper that `theme.ts` uses.
+
+| Function | Purpose |
+|---|---|
+| `setProjectTheme(partial \| undefined)` | register the project theme (the CLI does this) |
+| `getProjectTheme()` | read the currently registered partial |
+| `resetProjectTheme()` | clear it (tests rely on this for isolation) |
+| `loadTheme(path)` | import a theme module and validate its default export |
+| `loadProjectTheme({ cwd, config, override })` | resolve `config.theme` (default `theme.ts`) or `--theme <path>` |
+
+### Config and CLI
+
+`social.config.ts` may set `theme` (default `"theme.ts"`). The CLI loads and registers the theme
+**before importing any post**, because `createPost` runs at import time; `social dev` reloads it on
+every rebuild, so editing `theme.ts` restyles live. `--theme <path>` overrides the configured file; a
+missing default file is fine (defaults apply), a missing **explicit** one is an error.
+
+Primitives consume the theme **implicitly**: text falls back to `typography.body` for family, weight,
+size, and line height, and to `colors.text` for its fill. `typography.heading` is consumed by the
+semantic components (`headline()`, `subheadline()`, `number()`, `flow()`), which resolve against the
+post's merged theme during `layout()` (§7).
 
 ---
 
@@ -399,7 +430,8 @@ node:
 - **rect / group background** → `<rect>` with optional `rx`. A `group` with `fill` draws its own
   background before its children.
 - **circle** → `<circle>` centred at `box.x + radius`, `box.y + radius`.
-- **line** → `<line>` at its absolute coordinates.
+- **line** → `<line>` with coordinates translated by the node's box origin.
+- **path** → `<path>` scaled from its `viewBox` into its box.
 - **image** → `<image>` with a base64 `data:` URI for local files (no network fetch, keeps output
   deterministic).
 - **shadow** → a `<feDropShadow>` filter with a deterministic id (`shadow-0`, `shadow-1`, … in
@@ -428,11 +460,15 @@ is what makes output identical across machines.
 
 | Command | Behaviour |
 |---|---|
-| `social render <file> [--format svg\|png] [--out <dir>]` | loads the post, runs `layout`, renders, writes `dist/<name>.<ext>` |
-| `social dev <file>` | renders once, then `fs.watch`es the file and re-renders (cache-busted dynamic import) |
+| `social render <file> [--format svg\|png] [--out <dir>] [--theme <file>]` | loads the post, runs `layout`, renders, writes `dist/<name>.<ext>` |
+| `social dev <file> [--theme <file>]` | renders once, then watches the post **and** the theme file and re-renders (cache-busted) |
 
 Flags accept both `--format png` and `--format=png`. Errors are printed as `Error: <message>` and set
 a non-zero exit code.
+
+`dev` watches the **containing directory** of each file and filters by filename, rather than watching
+the file itself — atomic writes (editors, `writeFile`-and-rename) replace the inode and would
+otherwise silence a file-level watcher after the first change.
 
 `social.config.ts` (loaded by `src/theme/config.ts`) supplies:
 
@@ -441,11 +477,12 @@ interface SocialConfig {
   outDir: string;        // default "dist"
   fontsDir: string;      // default "fonts"
   defaultFormat: "png" | "svg";  // default "png"
+  theme?: string;        // default "theme.ts"
 }
 ```
 
-The CLI loads this config, then calls `configureFontRegistry(new FontRegistry([resolve(cwd, config.fontsDir)]))`
-before rendering, so `fontsDir` is authoritative for the whole run.
+The CLI loads this config, points the font registry at `fontsDir`, and registers the project theme
+(§8) — all **before importing the post**, since `createPost` runs at import time.
 
 > The compiled `build/cli/index.js` cannot render in-repo posts yet: those posts import the bare
 > `aiditor` specifier, which resolves under `tsx` via `tsconfig` paths but not from plain Node
@@ -500,8 +537,9 @@ Everything below is exported from `src/index.ts` (import as `aiditor`).
 
 **Theme**
 
-`createTheme`, `defineTheme`, `defaultTheme`, `loadConfig`, `defaultConfig` (+ types `Theme`,
-`DeepPartial`, `SocialConfig`).
+`createTheme`, `defineTheme`, `defaultTheme`, `setProjectTheme`, `getProjectTheme`,
+`resetProjectTheme`, `loadTheme`, `loadProjectTheme`, `loadConfig`, `defaultConfig` (+ types `Theme`,
+`DeepPartial`, `SocialConfig`, `ProjectThemeSource`).
 
 **Fonts & text**
 
@@ -669,6 +707,8 @@ determinism rather than pixel snapshots.
 | `Unknown format "…". Available formats: …` | `size` was a string that is not one of `FORMATS` keys. |
 | `path("…") requires numeric "width" and "height" props …` | Give the path/icon an explicit size. |
 | `Component was not resolved. Call layout(post) …` | Call `layout()` (or use `renderPost()`) before `renderToSvg()`. |
+| `Theme file "…" was not found.` | An explicit `--theme <path>` pointed at a missing file. |
+| `Theme file "…" must default-export defineTheme({...}).` | The theme module has no object default export. |
 | `grid() requires "columns" to be a positive integer.` | `columns` was missing, fractional, or < 1. |
 | `"file.ts" must default-export the result of createPost().` | The post file has no default export (or exports something else). |
 | `Post file "…" was not found.` | Path passed to `social render`/`dev` is wrong. |
@@ -680,10 +720,9 @@ determinism rather than pixel snapshots.
 The roadmap lives in the plan and `PRD.md`. Current state and next steps:
 
 - **Done:** Phase 0 (tooling), Phase 1 (renderer core), Phase 2 (layout system — `grow`, grid,
-  percentages, alignment helpers, box-relative `line`), and Phase 3 (component system — 12 semantic
-  components over the deferred `component` node, plus a `path` primitive).
-- **Next — Phase 4 (theme):** load `theme.ts` at render time and let posts pick up the project theme
-  without threading it manually — the other half of the deferred-factory decision.
-- **Phase 5 (CLI):** `social init`, `commander`-based parsing, `chokidar` watch.
+  percentages, alignment helpers, box-relative `line`), Phase 3 (component system — 12 semantic
+  components over the deferred `component` node, plus a `path` primitive), and Phase 4 (theme system
+  — `theme.ts` applied to every post via the project-theme registry, plus `--theme`).
+- **Next — Phase 5 (CLI):** `social init` scaffolding, `commander`-based parsing, `chokidar` watch.
 - **Phase 6 (agent optimization):** layout presets, per-component examples, and a component
   discovery command.

@@ -6,12 +6,15 @@ export interface SocialConfig {
   outDir: string;
   fontsDir: string;
   defaultFormat: "png" | "svg";
+  /** Path to the project theme file, relative to the working directory. */
+  theme?: string;
 }
 
 export const defaultConfig: SocialConfig = {
   outDir: "dist",
   fontsDir: "fonts",
   defaultFormat: "png",
+  theme: "theme.ts",
 };
 
 const CONFIG_FILES = ["social.config.ts", "social.config.js", "social.config.mjs"];

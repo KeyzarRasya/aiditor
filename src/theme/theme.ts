@@ -82,11 +82,34 @@ function deepMerge<T>(base: T, override: unknown): T {
   return result as T;
 }
 
-export function createTheme(overrides?: DeepPartial<Theme>): Theme {
-  return deepMerge(defaultTheme, overrides);
-}
-
-/** Identity helper that gives editors type-checking for a theme override object. */
+/**
+ * Identity helper that gives editors type-checking for a theme override object.
+ * `theme.ts` uses this as its default export.
+ */
 export function defineTheme(overrides: DeepPartial<Theme>): DeepPartial<Theme> {
   return overrides;
+}
+
+let projectTheme: DeepPartial<Theme> | undefined;
+
+/**
+ * Register the project theme (loaded from `theme.ts` by the CLI). It is merged under per-post
+ * `createPost({ theme })` overrides and over `defaultTheme`.
+ */
+export function setProjectTheme(theme: DeepPartial<Theme> | undefined): void {
+  projectTheme = theme;
+}
+
+export function getProjectTheme(): DeepPartial<Theme> | undefined {
+  return projectTheme;
+}
+
+/** Clear the registered project theme (used by tests to stay isolated). */
+export function resetProjectTheme(): void {
+  projectTheme = undefined;
+}
+
+/** Resolve a full theme: `defaultTheme` ← project theme ← per-post overrides. */
+export function createTheme(overrides?: DeepPartial<Theme>): Theme {
+  return deepMerge(deepMerge(defaultTheme, projectTheme), overrides);
 }

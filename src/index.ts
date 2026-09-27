@@ -99,7 +99,16 @@ export type { PngRenderOptions } from "./render/png.js";
 export { renderPost } from "./render/post.js";
 export type { RenderFormat, RenderPostOptions } from "./render/post.js";
 
-export { createTheme, defineTheme, defaultTheme } from "./theme/theme.js";
+export {
+  createTheme,
+  defineTheme,
+  defaultTheme,
+  setProjectTheme,
+  getProjectTheme,
+  resetProjectTheme,
+} from "./theme/theme.js";
+export { loadTheme, loadProjectTheme } from "./theme/load.js";
+export type { ProjectThemeSource } from "./theme/load.js";
 export type { DeepPartial, ShadowToken, Theme, TypographyToken } from "./theme/theme.js";
 
 export { loadConfig, defaultConfig } from "./theme/config.js";

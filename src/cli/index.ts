@@ -1,27 +1,31 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, watch, writeFileSync } from "node:fs";
-import { basename, extname, relative, resolve } from "node:path";
+import { basename, dirname, extname, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Post } from "../core/canvas.js";
 import { FontRegistry, configureFontRegistry } from "../fonts/registry.js";
 import { layout } from "../layout/index.js";
 import { renderPost, type RenderFormat } from "../render/post.js";
 import { loadConfig, type SocialConfig } from "../theme/config.js";
+import { loadProjectTheme } from "../theme/load.js";
+import { setProjectTheme } from "../theme/theme.js";
 
 const HELP = `social — social images as code
 
 Usage:
-  social render <post-file> [--format svg|png] [--out <dir>]
-  social dev <post-file>
+  social render <post-file> [--format svg|png] [--out <dir>] [--theme <file>]
+  social dev <post-file> [--theme <file>]
 
 Options:
   --format <svg|png>   Output format (default: png)
   --out <dir>          Output directory (default: dist)
+  --theme <file>       Theme file to use instead of social.config.ts's "theme"
 `;
 
 interface Context {
   config: SocialConfig;
   cwd: string;
+  themeOverride?: string;
 }
 
 function getOption(args: string[], name: string): string | undefined {
@@ -44,6 +48,16 @@ function isPost(value: unknown): value is Post {
     "root" in value &&
     "width" in value &&
     "height" in value
+  );
+}
+
+/** Load the project theme (or `--theme` override) and register it for `createPost`. */
+async function applyTheme(context: Context, bustCache = false): Promise<void> {
+  setProjectTheme(
+    await loadProjectTheme(
+      { cwd: context.cwd, config: context.config, override: context.themeOverride },
+      bustCache,
+    ),
   );
 }
 
@@ -84,6 +98,17 @@ async function renderPostFile(
   return outFile;
 }
 
+/**
+ * Watch a single file. We watch the containing directory rather than the file itself: editors (and
+ * atomic writers) replace the file, which invalidates a file-level watcher after the first change.
+ */
+function watchFile(path: string, onChange: () => void): void {
+  const name = basename(path);
+  watch(dirname(path), (_event, filename) => {
+    if (filename === null || filename === name) onChange();
+  });
+}
+
 function formatError(error: unknown): string {
   return error instanceof Error ? `Error: ${error.message}` : `Error: ${String(error)}`;
 }
@@ -93,7 +118,10 @@ async function main(argv: string[]): Promise<void> {
   const [command, ...rest] = argv;
   const config = await loadConfig(cwd);
   configureFontRegistry(new FontRegistry([resolve(cwd, config.fontsDir)]));
-  const context: Context = { config, cwd };
+  const context: Context = { config, cwd, themeOverride: getOption(argv, "--theme") };
+
+  // Register the project theme before any post is imported, since `createPost` runs at import time.
+  await applyTheme(context);
 
   switch (command) {
     case "render": {
@@ -111,14 +139,29 @@ async function main(argv: string[]): Promise<void> {
       process.stdout.write(`Watching ${file}...\n`);
 
       let timer: NodeJS.Timeout | undefined;
-      watch(resolve(cwd, file), () => {
+      const rebuild = (): void => {
         clearTimeout(timer);
         timer = setTimeout(() => {
-          renderPostFile(rest, context, true)
-            .then((outFile) => process.stdout.write(`Rendered ${relative(cwd, outFile)}\n`))
-            .catch((error: unknown) => process.stderr.write(`${formatError(error)}\n`));
+          void (async () => {
+            try {
+              // Reload the theme too, so editing theme.ts restyles live.
+              await applyTheme(context, true);
+              const outFile = await renderPostFile(rest, context, true);
+              process.stdout.write(`Rendered ${relative(cwd, outFile)}\n`);
+            } catch (error) {
+              process.stderr.write(`${formatError(error)}\n`);
+            }
+          })();
         }, 50);
-      });
+      };
+
+      watchFile(resolve(cwd, file), rebuild);
+
+      const themeFile = resolve(cwd, context.themeOverride ?? config.theme ?? "theme.ts");
+      if (existsSync(themeFile)) {
+        watchFile(themeFile, rebuild);
+        process.stdout.write(`Watching ${relative(cwd, themeFile)}...\n`);
+      }
       return;
     }
     default:
