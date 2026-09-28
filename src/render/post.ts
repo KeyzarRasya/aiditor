@@ -1,4 +1,5 @@
 import type { Post } from "../core/canvas.js";
+import type { Carousel } from "../core/carousel.js";
 import { getFontRegistry } from "../fonts/registry.js";
 import { layout } from "../layout/index.js";
 import { renderToPng } from "./png.js";
@@ -26,4 +27,12 @@ export function renderPost(post: Post, options: RenderPostOptions = {}): string 
     fontFiles: options.fontFiles ?? registry.paths,
     defaultFontFamily: post.theme.typography.body.family,
   });
+}
+
+/** Render every slide of a carousel, in order. */
+export function renderCarousel(
+  carousel: Carousel,
+  options: RenderPostOptions = {},
+): (string | Buffer)[] {
+  return carousel.slides.map((slide) => renderPost(slide, options));
 }

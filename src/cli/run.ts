@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { watch } from "chokidar";
 import { Command } from "commander";
 import type { Post } from "../core/canvas.js";
+import { isCarousel, type Carousel } from "../core/carousel.js";
 import {
   CATALOG,
   findEntry,
@@ -13,10 +14,11 @@ import {
 } from "../components/catalog.js";
 import { FontRegistry, configureFontRegistry } from "../fonts/registry.js";
 import { layout } from "../layout/index.js";
-import { renderPost, type RenderFormat } from "../render/post.js";
+import { renderCarousel, renderPost, type RenderFormat } from "../render/post.js";
 import { loadConfig, type SocialConfig } from "../theme/config.js";
 import { loadProjectTheme } from "../theme/load.js";
 import { setProjectTheme } from "../theme/theme.js";
+import { collectImageDeps } from "./assets.js";
 import { initProject } from "./init.js";
 
 interface Context {
@@ -81,7 +83,11 @@ async function createContext(cwd: string, themeOverride?: string): Promise<Conte
   return context;
 }
 
-async function loadPost(file: string, context: Context, bustCache = false): Promise<Post> {
+async function loadPost(
+  file: string,
+  context: Context,
+  bustCache = false,
+): Promise<Post | Carousel> {
   const path = resolve(context.cwd, file);
   if (!existsSync(path)) {
     throw new Error(`Post file "${file}" was not found.`);
@@ -89,28 +95,41 @@ async function loadPost(file: string, context: Context, bustCache = false): Prom
   const url = pathToFileURL(path).href + (bustCache ? `?v=${Date.now().toString()}` : "");
   const imported = (await import(url)) as { default?: unknown; post?: unknown };
   const post = imported.default ?? imported.post;
-  if (!isPost(post)) {
-    throw new Error(`"${file}" must default-export the result of createPost().`);
+  if (isPost(post) || isCarousel(post)) {
+    return post;
   }
-  return post;
+  throw new Error(`"${file}" must default-export the result of createPost() or createCarousel().`);
 }
 
-async function renderToFile(
+async function renderToFiles(
   flags: RenderFlags,
   context: Context,
   bustCache = false,
-): Promise<string> {
+): Promise<string[]> {
   const format = parseFormat(flags.format, context.config.defaultFormat);
-  const outDir = resolve(context.cwd, flags.out ?? context.config.outDir);
+  const outBase = resolve(context.cwd, flags.out ?? context.config.outDir);
   const post = await loadPost(flags.file, context, bustCache);
+
+  if (isCarousel(post)) {
+    const name = basename(flags.file, extname(flags.file));
+    const outDir = resolve(outBase, name);
+    mkdirSync(outDir, { recursive: true });
+    const outputs = renderCarousel(post, { format });
+    const width = Math.max(2, String(outputs.length).length);
+    return outputs.map((output, index) => {
+      const outFile = resolve(outDir, `slide-${String(index + 1).padStart(width, "0")}.${format}`);
+      writeFileSync(outFile, output);
+      return outFile;
+    });
+  }
 
   layout(post);
   const output = renderPost(post, { format });
 
-  mkdirSync(outDir, { recursive: true });
-  const outFile = resolve(outDir, `${basename(flags.file, extname(flags.file))}.${format}`);
+  mkdirSync(outBase, { recursive: true });
+  const outFile = resolve(outBase, `${basename(flags.file, extname(flags.file))}.${format}`);
   writeFileSync(outFile, output);
-  return outFile;
+  return [outFile];
 }
 
 function themeFilePath(context: Context): string {
@@ -120,12 +139,12 @@ function themeFilePath(context: Context): string {
   );
 }
 
-/** Watch the post and the theme, re-rendering on change. Keeps the process alive. */
-function startWatching(flags: RenderFlags, context: Context): void {
+/** Watch the post, the theme, and its image assets, re-rendering on change. Keeps the process alive. */
+function startWatching(flags: RenderFlags, context: Context, assetPaths: string[]): void {
   const postPath = resolve(context.cwd, flags.file);
   const themePath = themeFilePath(context);
   const hasTheme = existsSync(themePath);
-  const targets = hasTheme ? [postPath, themePath] : [postPath];
+  const targets = [...new Set(hasTheme ? [postPath, themePath, ...assetPaths] : [postPath, ...assetPaths])];
 
   if (hasTheme) {
     process.stdout.write(`Watching ${relative(context.cwd, themePath)}...\n`);
@@ -138,8 +157,10 @@ function startWatching(flags: RenderFlags, context: Context): void {
       void (async () => {
         try {
           await applyTheme(context, true);
-          const outFile = await renderToFile(flags, context, true);
-          process.stdout.write(`Rendered ${relative(context.cwd, outFile)}\n`);
+          const outFiles = await renderToFiles(flags, context, true);
+          for (const outFile of outFiles) {
+            process.stdout.write(`Rendered ${relative(context.cwd, outFile)}\n`);
+          }
         } catch (error) {
           process.stderr.write(`${formatError(error)}\n`);
         }
@@ -201,23 +222,25 @@ function buildProgram(): Command {
 
   program
     .command("render")
-    .description("render a post to an image")
+    .description("render a post to an image (or a carousel to a folder of slides)")
     .argument("<post-file>", "post file, e.g. posts/hello.ts")
     .option("-f, --format <format>", "output format: svg or png")
     .option("-o, --out <dir>", "output directory")
     .option("-t, --theme <file>", "theme file to use instead of social.config.ts")
     .action(async (file: string, options: { format?: string; out?: string; theme?: string }) => {
       const context = await createContext(process.cwd(), options.theme);
-      const outFile = await renderToFile(
+      const outFiles = await renderToFiles(
         { file, format: options.format, out: options.out },
         context,
       );
-      process.stdout.write(`Rendered ${relative(context.cwd, outFile)}\n`);
+      for (const outFile of outFiles) {
+        process.stdout.write(`Rendered ${relative(context.cwd, outFile)}\n`);
+      }
     });
 
   program
     .command("dev")
-    .description("render a post, then re-render whenever it or the theme changes")
+    .description("render a post, then re-render whenever it, the theme, or its images change")
     .argument("<post-file>", "post file, e.g. posts/hello.ts")
     .option("-f, --format <format>", "output format: svg or png")
     .option("-o, --out <dir>", "output directory")
@@ -225,10 +248,12 @@ function buildProgram(): Command {
     .action(async (file: string, options: { format?: string; out?: string; theme?: string }) => {
       const context = await createContext(process.cwd(), options.theme);
       const flags: RenderFlags = { file, format: options.format, out: options.out };
-      const first = await renderToFile(flags, context, true);
-      process.stdout.write(`Rendered ${relative(context.cwd, first)}\n`);
+      const first = await renderToFiles(flags, context, true);
+      for (const outFile of first) {
+        process.stdout.write(`Rendered ${relative(context.cwd, outFile)}\n`);
+      }
       process.stdout.write(`Watching ${file}...\n`);
-      startWatching(flags, context);
+      startWatching(flags, context, collectImageDeps(await loadPost(file, context, true), context.cwd));
     });
 
   return program;

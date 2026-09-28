@@ -6,6 +6,9 @@ export {
 } from "./core/canvas.js";
 export type { FormatName, Post, PostOptions, PostSize } from "./core/canvas.js";
 
+export { createCarousel, isCarousel } from "./core/carousel.js";
+export type { Carousel, CarouselOptions, CarouselSlideOptions } from "./core/carousel.js";
+
 export {
   rect,
   circle,
@@ -111,7 +114,7 @@ export type {
 export { renderToSvg } from "./render/svg.js";
 export { renderToPng } from "./render/png.js";
 export type { PngRenderOptions } from "./render/png.js";
-export { renderPost } from "./render/post.js";
+export { renderPost, renderCarousel } from "./render/post.js";
 export type { RenderFormat, RenderPostOptions } from "./render/post.js";
 
 export {

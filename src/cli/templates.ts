@@ -101,8 +101,24 @@ Never call a post done without looking at the rendered output.
 - Keep the 72px safe margin the root container applies.
 - Colours and typography come from \`theme.ts\` — change it there, not per post.
 - Keep text readable at the target resolution: headings ≥ 48px, body ≥ 28px.
-- One post file describes one image.
-- After every change, render and inspect the result.
+- One post file describes one image (\`createPost\`) or one carousel folder (\`createCarousel\` →
+  \`dist/<name>/slide-01.png\`, …).
+- After every change, render and inspect the result. For carousels, inspect every slide.
+
+## Images
+
+- Store workflow screenshots and PoC shots under \`assets/\`, reference them by project-root
+  path: \`image("assets/shot.png", { width: 936, height: 520 })\`. Any path relative to the
+  project root works.
+- \`width\` and \`height\` are mandatory numbers (images have no intrinsic sizing). Keep \`width\`
+  within the content column (≤936px on square after the 72px safe margins).
+- Supported formats: \`.png\`, \`.jpg\`, \`.jpeg\`, \`.webp\`, \`.gif\`, \`.svg\`. Pre-size large
+  screenshots before committing so the repo stays lean.
+- Remote \`http(s):\` URLs render in SVG output only and stay blank in PNG — always use local
+  files for anything that ships as PNG.
+- \`social dev\` re-renders when a referenced asset file changes. New files under \`assets/\`
+  are picked up automatically; asset paths outside \`assets/\` that are added mid-session need a
+  \`dev\` restart to be picked up.
 
 ## Errors are contracts
 
